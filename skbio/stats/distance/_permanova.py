@@ -13,6 +13,7 @@ from warnings import warn
 from typing import TYPE_CHECKING
 
 import numpy as np
+import math
 
 from ._base import (
     _preprocess_input_sng,
@@ -27,10 +28,106 @@ from skbio.binaries import (
 )
 from skbio.util._decorator import params_aliased
 
+try:
+    from numba import njit, prange
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
+
 if TYPE_CHECKING:  # pragma: no cover
     from numpy.typing import ArrayLike
     import pandas as pd
     from skbio.util._typing import SeedLike
+
+
+if NUMBA_AVAILABLE:
+
+    @njit
+    def _sW_partials_numba(dm, gr):
+        n = dm.shape[0]
+        n_2 = n // 2
+        partial1 = np.zeros(n_2, np.float64)
+        partial2 = np.zeros(n_2, np.float64)
+        for rowi in range(n_2):
+            local = 0.0
+            gi = gr[rowi]
+            for col in range(rowi + 1, n):
+                if gr[col] == gi:
+                    local += dm[rowi, col] * dm[rowi, col]
+            partial1[rowi] = local
+
+            row = n - rowi - 2
+            if row != rowi:
+                local = 0.0
+                gi = gr[row]
+                for col in range(row + 1, n):
+                    if gr[col] == gi:
+                        local += dm[row, col] * dm[row, col]
+                partial2[rowi] = local
+        return partial1, partial2
+
+    @njit(parallel=True)
+    def _sW_reduce_numba(partial1, partial2, gs, gr):
+        n_orig = partial1.shape[0]
+        n_full = n_orig * 2
+        total = 0.0
+        for i in prange(n_orig):
+            gi = gr[i]
+            total += partial1[i] / gs[gi]
+        for i in range(n_orig):
+            row = n_full - i - 2
+            gi = gr[row]
+            total += partial2[i] / gs[gi]
+        return total
+
+    def _permanova_f_stat_sW_numba(dm, gs, gr):
+        p1, p2 = _sW_partials_numba(dm, gr)
+        return _sW_reduce_numba(p1, p2, gs, gr)
+
+    @njit
+    def _sW_partials_condensed_numba(dm, gr):
+        k = dm.shape[0]
+        n = int((1.0 + math.sqrt(1.0 + 8.0 * k)) / 2.0)
+        n_2 = n // 2
+        partial1 = np.zeros(n_2, np.float64)
+        partial2 = np.zeros(n_2, np.float64)
+        for rowi in range(n_2):
+            local = 0.0
+            gi = gr[rowi]
+            for col in range(rowi + 1, n):
+                if gr[col] == gi:
+                    idx_ = rowi * n + col - ((rowi + 2) * (rowi + 1)) // 2
+                    local += dm[idx_] * dm[idx_]
+            partial1[rowi] = local
+
+            row = n - rowi - 2
+            if row != rowi:
+                local = 0.0
+                gi = gr[row]
+                for col in range(row + 1, n):
+                    if gr[col] == gi:
+                        idx_ = row * n + col - ((row + 2) * (row + 1)) // 2
+                        local += dm[idx_] * dm[idx_]
+                partial2[rowi] = local
+        return partial1, partial2
+
+    @njit(parallel=True)
+    def _sW_reduce_condensed_numba(partial1, partial2, gs, gr):
+        n_orig = partial1.shape[0]
+        n_full = n_orig * 2
+        total = 0.0
+        for i in prange(n_orig):
+            gi = gr[i]
+            total += partial1[i] / gs[gi]
+        for i in range(n_orig):
+            row = n_full - i - 2
+            gi = gr[row]
+            total += partial2[i] / gs[gi]
+        return total
+
+    def _permanova_f_stat_sW_condensed_numba(dm, gs, gr):
+        p1, p2 = _sW_partials_condensed_numba(dm, gr)
+        return _sW_reduce_condensed_numba(p1, p2, gs, gr)
 
 
 @params_aliased([("distmat", "distance_matrix", "0.7.0", False)])
@@ -229,11 +326,23 @@ def _compute_f_stat(
     """Compute PERMANOVA pseudo-F statistic."""
     # Calculate s_W for each group, accounting for different group sizes.
     if distance_matrix._flags["CONDENSED"]:
-        s_W = permanova_f_stat_sW_condensed_cy(
-            distance_matrix.data, group_sizes, grouping
-        )
+        if NUMBA_AVAILABLE:
+            s_W = _permanova_f_stat_sW_condensed_numba(
+                distance_matrix.data, group_sizes, grouping
+            )
+        else:
+            s_W = permanova_f_stat_sW_condensed_cy(
+                distance_matrix.data, group_sizes, grouping
+            )
     else:
-        s_W = permanova_f_stat_sW_cy(distance_matrix.data, group_sizes, grouping)
+        if NUMBA_AVAILABLE:
+            s_W = _permanova_f_stat_sW_numba(
+                distance_matrix.data, group_sizes, grouping
+            )
+        else:
+            s_W = permanova_f_stat_sW_cy(
+                distance_matrix.data, group_sizes, grouping
+            )
 
     s_A = s_T - s_W
     return (s_A / (num_groups - 1)) / (s_W / (sample_size - num_groups))
