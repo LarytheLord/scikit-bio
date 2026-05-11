@@ -42,19 +42,20 @@ if TYPE_CHECKING:  # pragma: no cover
 
 if NUMBA_AVAILABLE:
 
-    @njit
-    def _sW_partials_numba(dm, gr):
+    @njit(parallel=True)
+    def _permanova_f_stat_sW_numba(dm, gs, gr):
         n = dm.shape[0]
         n_2 = n // 2
-        partial1 = np.zeros(n_2, np.float64)
-        partial2 = np.zeros(n_2, np.float64)
-        for rowi in range(n_2):
+        partial = np.zeros(n_2, np.float64)
+
+        for rowi in prange(n_2):
             local = 0.0
             gi = gr[rowi]
             for col in range(rowi + 1, n):
                 if gr[col] == gi:
                     local += dm[rowi, col] * dm[rowi, col]
-            partial1[rowi] = local
+
+            total = local / gs[gi]
 
             row = n - rowi - 2
             if row != rowi:
@@ -63,42 +64,31 @@ if NUMBA_AVAILABLE:
                 for col in range(row + 1, n):
                     if gr[col] == gi:
                         local += dm[row, col] * dm[row, col]
-                partial2[rowi] = local
-        return partial1, partial2
+                total += local / gs[gi]
+
+            partial[rowi] = total
+
+        s_W = 0.0
+        for i in range(n_2):
+            s_W += partial[i]
+        return s_W
 
     @njit(parallel=True)
-    def _sW_reduce_numba(partial1, partial2, gs, gr):
-        n_orig = partial1.shape[0]
-        n_full = n_orig * 2
-        total = 0.0
-        for i in prange(n_orig):
-            gi = gr[i]
-            total += partial1[i] / gs[gi]
-        for i in range(n_orig):
-            row = n_full - i - 2
-            gi = gr[row]
-            total += partial2[i] / gs[gi]
-        return total
-
-    def _permanova_f_stat_sW_numba(dm, gs, gr):
-        p1, p2 = _sW_partials_numba(dm, gr)
-        return _sW_reduce_numba(p1, p2, gs, gr)
-
-    @njit
-    def _sW_partials_condensed_numba(dm, gr):
+    def _permanova_f_stat_sW_condensed_numba(dm, gs, gr):
         k = dm.shape[0]
         n = int((1.0 + math.sqrt(1.0 + 8.0 * k)) / 2.0)
         n_2 = n // 2
-        partial1 = np.zeros(n_2, np.float64)
-        partial2 = np.zeros(n_2, np.float64)
-        for rowi in range(n_2):
+        partial = np.zeros(n_2, np.float64)
+
+        for rowi in prange(n_2):
             local = 0.0
             gi = gr[rowi]
             for col in range(rowi + 1, n):
                 if gr[col] == gi:
                     idx_ = rowi * n + col - ((rowi + 2) * (rowi + 1)) // 2
                     local += dm[idx_] * dm[idx_]
-            partial1[rowi] = local
+
+            total = local / gs[gi]
 
             row = n - rowi - 2
             if row != rowi:
@@ -108,26 +98,14 @@ if NUMBA_AVAILABLE:
                     if gr[col] == gi:
                         idx_ = row * n + col - ((row + 2) * (row + 1)) // 2
                         local += dm[idx_] * dm[idx_]
-                partial2[rowi] = local
-        return partial1, partial2
+                total += local / gs[gi]
 
-    @njit(parallel=True)
-    def _sW_reduce_condensed_numba(partial1, partial2, gs, gr):
-        n_orig = partial1.shape[0]
-        n_full = n_orig * 2
-        total = 0.0
-        for i in prange(n_orig):
-            gi = gr[i]
-            total += partial1[i] / gs[gi]
-        for i in range(n_orig):
-            row = n_full - i - 2
-            gi = gr[row]
-            total += partial2[i] / gs[gi]
-        return total
+            partial[rowi] = total
 
-    def _permanova_f_stat_sW_condensed_numba(dm, gs, gr):
-        p1, p2 = _sW_partials_condensed_numba(dm, gr)
-        return _sW_reduce_condensed_numba(p1, p2, gs, gr)
+        s_W = 0.0
+        for i in range(n_2):
+            s_W += partial[i]
+        return s_W
 
 
 @params_aliased([("distmat", "distance_matrix", "0.7.0", False)])
