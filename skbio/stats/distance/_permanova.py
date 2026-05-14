@@ -43,68 +43,117 @@ if TYPE_CHECKING:  # pragma: no cover
 if NUMBA_AVAILABLE:
 
     @njit(parallel=True)
-    def _permanova_f_stat_sW_numba(dm, gs, gr):
-        n = dm.shape[0]
-        n_2 = n // 2
-        partial = np.zeros(n_2, np.float64)
+    def _permanova_f_stat_sW_numba(distance_matrix, group_sizes, grouping):
+        """Compute s_W for full (non-condensed) distance matrix using Numba.
 
-        for rowi in prange(n_2):
-            local = 0.0
-            gi = gr[rowi]
-            for col in range(rowi + 1, n):
-                if gr[col] == gi:
-                    local += dm[rowi, col] * dm[rowi, col]
+        This is a two-stage parallel reduction. Each parallel iteration computes
+        the contribution of one row-pair (row_idx and its mirror row) and stores
+        it in a partial array. The final sum is performed serially to avoid a
+        known parfor reduction cycle bug in Numba 0.65.x when the reduction
+        variable is read inside the inner loop.
 
-            total = local / gs[gi]
+        Parameters
+        ----------
+        distance_matrix : np.ndarray, shape (n, n)
+            Full symmetric distance matrix.
+        group_sizes : np.ndarray, shape (num_groups,)
+            Number of objects in each group (precomputed via np.bincount).
+        grouping : np.ndarray, shape (n,)
+            Integer group label for each object (values 0 to num_groups - 1).
 
-            row = n - rowi - 2
-            if row != rowi:
-                local = 0.0
-                gi = gr[row]
-                for col in range(row + 1, n):
-                    if gr[col] == gi:
-                        local += dm[row, col] * dm[row, col]
-                total += local / gs[gi]
+        Returns
+        -------
+        float
+            The within-group sum of squares s_W.
 
-            partial[rowi] = total
+        """
+        n = distance_matrix.shape[0]
+        n_half = n // 2
+        partials = np.zeros(n_half, np.float64)
+
+        for row_idx in prange(n_half):
+            group_idx = grouping[row_idx]
+            local_sum = 0.0
+            for col_idx in range(row_idx + 1, n):
+                if grouping[col_idx] == group_idx:
+                    val = distance_matrix[row_idx, col_idx]
+                    local_sum += val * val
+
+            group_sum = local_sum / group_sizes[group_idx]
+
+            mirror_row = n - row_idx - 2
+            if mirror_row != row_idx:
+                group_idx = grouping[mirror_row]
+                local_sum = 0.0
+                for col_idx in range(mirror_row + 1, n):
+                    if grouping[col_idx] == group_idx:
+                        val = distance_matrix[mirror_row, col_idx]
+                        local_sum += val * val
+                group_sum += local_sum / group_sizes[group_idx]
+
+            partials[row_idx] = group_sum
 
         s_W = 0.0
-        for i in range(n_2):
-            s_W += partial[i]
+        for i in range(n_half):
+            s_W += partials[i]
         return s_W
 
     @njit(parallel=True)
-    def _permanova_f_stat_sW_condensed_numba(dm, gs, gr):
-        k = dm.shape[0]
+    def _permanova_f_stat_sW_condensed_numba(condensed_matrix, group_sizes, grouping):
+        """Compute s_W for condensed distance matrix using Numba.
+
+        Operates on the upper triangle of the condensed distance matrix, using
+        the standard formula to map (row_idx, col_idx) pairs to a 1-D condensed
+        index.
+
+        Parameters
+        ----------
+        condensed_matrix : np.ndarray, shape (k,)
+            Condensed (upper triangle) distance matrix where
+            k = n * (n - 1) // 2.
+        group_sizes : np.ndarray, shape (num_groups,)
+            Number of objects in each group.
+        grouping : np.ndarray, shape (n,)
+            Integer group label for each object.
+
+        Returns
+        -------
+        float
+            The within-group sum of squares s_W.
+
+        """
+        k = condensed_matrix.shape[0]
         n = int((1.0 + math.sqrt(1.0 + 8.0 * k)) / 2.0)
-        n_2 = n // 2
-        partial = np.zeros(n_2, np.float64)
+        n_half = n // 2
+        partials = np.zeros(n_half, np.float64)
 
-        for rowi in prange(n_2):
-            local = 0.0
-            gi = gr[rowi]
-            for col in range(rowi + 1, n):
-                if gr[col] == gi:
-                    idx_ = rowi * n + col - ((rowi + 2) * (rowi + 1)) // 2
-                    local += dm[idx_] * dm[idx_]
+        for row_idx in prange(n_half):
+            group_idx = grouping[row_idx]
+            local_sum = 0.0
+            for col_idx in range(row_idx + 1, n):
+                if grouping[col_idx] == group_idx:
+                    condensed_idx = row_idx * n + col_idx - ((row_idx + 2) * (row_idx + 1)) // 2
+                    val = condensed_matrix[condensed_idx]
+                    local_sum += val * val
 
-            total = local / gs[gi]
+            group_sum = local_sum / group_sizes[group_idx]
 
-            row = n - rowi - 2
-            if row != rowi:
-                local = 0.0
-                gi = gr[row]
-                for col in range(row + 1, n):
-                    if gr[col] == gi:
-                        idx_ = row * n + col - ((row + 2) * (row + 1)) // 2
-                        local += dm[idx_] * dm[idx_]
-                total += local / gs[gi]
+            mirror_row = n - row_idx - 2
+            if mirror_row != row_idx:
+                group_idx = grouping[mirror_row]
+                local_sum = 0.0
+                for col_idx in range(mirror_row + 1, n):
+                    if grouping[col_idx] == group_idx:
+                        condensed_idx = mirror_row * n + col_idx - ((mirror_row + 2) * (mirror_row + 1)) // 2
+                        val = condensed_matrix[condensed_idx]
+                        local_sum += val * val
+                group_sum += local_sum / group_sizes[group_idx]
 
-            partial[rowi] = total
+            partials[row_idx] = group_sum
 
         s_W = 0.0
-        for i in range(n_2):
-            s_W += partial[i]
+        for i in range(n_half):
+            s_W += partials[i]
         return s_W
 
 
@@ -301,8 +350,12 @@ def permanova(
 def _compute_f_stat(
     sample_size, num_groups, distance_matrix, group_sizes, s_T, grouping
 ):
-    """Compute PERMANOVA pseudo-F statistic."""
-    # Calculate s_W for each group, accounting for different group sizes.
+    """Compute PERMANOVA pseudo-F statistic.
+
+    Calls the s_W helper appropriate for the distance matrix format, then
+    combines with the precomputed s_T to produce the pseudo-F statistic.
+
+    """
     if distance_matrix._flags["CONDENSED"]:
         if NUMBA_AVAILABLE:
             s_W = _permanova_f_stat_sW_condensed_numba(
