@@ -44,28 +44,15 @@ if NUMBA_AVAILABLE:
 
     @njit(parallel=True)
     def _permanova_f_stat_sW_numba(distance_matrix, group_sizes, grouping):
-        """Compute s_W for full (non-condensed) distance matrix using Numba.
+        """Compute within-group sum of squares for a full distance matrix.
 
-        This is a two-stage parallel reduction. Each parallel iteration computes
-        the contribution of one row-pair (row_idx and its mirror row) and stores
-        it in a partial array. The final sum is performed serially to avoid a
-        known parfor reduction cycle bug in Numba 0.65.x when the reduction
-        variable is read inside the inner loop.
+        We process the upper triangle of the matrix (each pair only once) and sum
+        the squared distances for pairs that end up in the same group. The key
+        insight is that we only need to look at half the matrix since it's symmetric.
 
-        Parameters
-        ----------
-        distance_matrix : np.ndarray, shape (n, n)
-            Full symmetric distance matrix.
-        group_sizes : np.ndarray, shape (num_groups,)
-            Number of objects in each group (precomputed via np.bincount).
-        grouping : np.ndarray, shape (n,)
-            Integer group label for each object (values 0 to num_groups - 1).
-
-        Returns
-        -------
-        float
-            The within-group sum of squares s_W.
-
+        There's a second half we handle by pairing row i with row (n-2-i) — this
+        covers the mirrored section without doing duplicate work. We accumulate
+        the partials into an array first, then sum them up in a second pass.
         """
         n = distance_matrix.shape[0]
         n_half = n // 2
@@ -100,27 +87,12 @@ if NUMBA_AVAILABLE:
 
     @njit(parallel=True)
     def _permanova_f_stat_sW_condensed_numba(condensed_matrix, group_sizes, grouping):
-        """Compute s_W for condensed distance matrix using Numba.
+        """Compute within-group sum of squares for a condensed distance matrix.
 
-        Operates on the upper triangle of the condensed distance matrix, using
-        the standard formula to map (row_idx, col_idx) pairs to a 1-D condensed
-        index.
-
-        Parameters
-        ----------
-        condensed_matrix : np.ndarray, shape (k,)
-            Condensed (upper triangle) distance matrix where
-            k = n * (n - 1) // 2.
-        group_sizes : np.ndarray, shape (num_groups,)
-            Number of objects in each group.
-        grouping : np.ndarray, shape (n,)
-            Integer group label for each object.
-
-        Returns
-        -------
-        float
-            The within-group sum of squares s_W.
-
+        The condensed form stores only the upper triangle as a 1-D array. We use
+        the standard index formula to map (row_idx, col_idx) pairs to their
+        position in the condensed array. Same idea as the full version — just
+        translating indices instead of reading directly from the 2-D matrix.
         """
         k = condensed_matrix.shape[0]
         n = int((1.0 + math.sqrt(1.0 + 8.0 * k)) / 2.0)
@@ -350,11 +322,12 @@ def permanova(
 def _compute_f_stat(
     sample_size, num_groups, distance_matrix, group_sizes, s_T, grouping
 ):
-    """Compute PERMANOVA pseudo-F statistic.
+    """Compute the pseudo-F statistic for the current grouping.
 
-    Calls the s_W helper appropriate for the distance matrix format, then
-    combines with the precomputed s_T to produce the pseudo-F statistic.
-
+    First we compute s_W (within-group sum of squares) from the distance matrix.
+    Then s_A = s_T - s_W gives us the between-group sum of squares. The pseudo-F
+    is the ratio of these, normalized by their degrees of freedom. We use Numba
+    if it's available, falling back to Cython otherwise.
     """
     if distance_matrix._flags["CONDENSED"]:
         if NUMBA_AVAILABLE:
