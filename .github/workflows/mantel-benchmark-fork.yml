@@ -1,0 +1,87 @@
+name: Mantel Benchmark Fork
+
+on:
+  workflow_dispatch:
+
+jobs:
+  benchmark-linux-controls:
+    name: Linux OpenMP and Numba controls (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: cython-omp1
+            omp_threads: "1"
+            numba_threads: "8"
+          - label: cython-omp8
+            omp_threads: "8"
+            numba_threads: "8"
+          - label: numba-threads1
+            omp_threads: "8"
+            numba_threads: "1"
+          - label: numba-threads8
+            omp_threads: "8"
+            numba_threads: "8"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          activate-environment: bench
+          python-version: "3.13"
+
+      - name: Install compiler and runtime dependencies
+        run: |
+          conda install -q --yes -c conda-forge \
+            cython numpy scipy h5py pandas statsmodels patsy requests \
+            decorator natsort biom-format array-api-compat pytest matplotlib \
+            responses coverage numba gxx_linux-64
+          conda list
+
+      - name: Show compiler environment
+        run: |
+          echo "CC=$CC"
+          echo "CXX=$CXX"
+          which gcc || true
+          which g++ || true
+          $CC --version || true
+          $CXX --version || true
+          lscpu || true
+
+      - name: Build local editable install
+        run: |
+          python -m ensurepip
+          python -m pip install --no-build-isolation --no-deps -e .
+
+      - name: Show linked libraries
+        run: |
+          python - <<'PY'
+          from skbio.stats.distance import _cutils
+          print(_cutils.__file__)
+          PY
+          ldd $(python - <<'PY'
+          from skbio.stats.distance import _cutils
+          print(_cutils.__file__)
+          PY
+          ) || true
+
+      - name: Run focused Mantel tests
+        run: |
+          python -m pytest skbio/stats/distance/tests/test_mantel.py -x -q
+
+      - name: Run control benchmark
+        env:
+          OMP_NUM_THREADS: ${{ matrix.omp_threads }}
+          NUMBA_NUM_THREADS: ${{ matrix.numba_threads }}
+        run: |
+          python ci/benchmark_mantel_pr.py --n 5000 --permutations 999 --forms full | tee benchmark-${{ matrix.label }}.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mantel-benchmark-${{ matrix.label }}
+          path: benchmark-${{ matrix.label }}.txt
