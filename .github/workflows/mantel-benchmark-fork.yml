@@ -87,3 +87,79 @@ jobs:
         with:
           name: mantel-benchmark-${{ matrix.label }}
           path: benchmark-${{ matrix.label }}.txt
+
+  benchmark-linux-large:
+    name: Linux larger Mantel benchmark (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    continue-on-error: ${{ matrix.experimental }}
+    defaults:
+      run:
+        shell: bash -l {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: full-5000-9999
+            n: "5000"
+            perms: "9999"
+            form: "full"
+            timeout_minutes: 90
+            experimental: false
+          - label: condensed-5000-9999
+            n: "5000"
+            perms: "9999"
+            form: "condensed"
+            timeout_minutes: 180
+            experimental: false
+          - label: condensed-25000-999
+            n: "25000"
+            perms: "999"
+            form: "condensed"
+            timeout_minutes: 240
+            experimental: true
+          - label: condensed-25000-9999
+            n: "25000"
+            perms: "9999"
+            form: "condensed"
+            timeout_minutes: 360
+            experimental: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          activate-environment: bench
+          python-version: "3.13"
+
+      - name: Install compiler and runtime dependencies
+        run: |
+          conda install -q --yes -c conda-forge \
+            cython numpy scipy h5py pandas statsmodels patsy requests \
+            decorator natsort biom-format array-api-compat pytest matplotlib \
+            responses coverage numba gxx_linux-64
+          conda list
+
+      - name: Show runner resources
+        run: |
+          lscpu || true
+          free -h || true
+          df -h . || true
+
+      - name: Build local editable install
+        run: |
+          python -m ensurepip
+          python -m pip install --no-build-isolation --no-deps -e .
+
+      - name: Run larger benchmark
+        env:
+          OMP_NUM_THREADS: "8"
+          NUMBA_NUM_THREADS: "8"
+        run: |
+          python ci/benchmark_mantel_pr.py --n ${{ matrix.n }} --permutations ${{ matrix.perms }} --forms ${{ matrix.form }} | tee benchmark-${{ matrix.label }}.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mantel-benchmark-${{ matrix.label }}
+          path: benchmark-${{ matrix.label }}.txt
