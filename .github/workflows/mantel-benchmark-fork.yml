@@ -1,6 +1,8 @@
 name: Mantel Benchmark Fork
 
 on:
+  push:
+    branches: [bench-mantel-openmp]
   workflow_dispatch:
 
 jobs:
