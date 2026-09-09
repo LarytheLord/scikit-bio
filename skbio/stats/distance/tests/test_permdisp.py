@@ -624,6 +624,19 @@ class PERMDISPEngineTests(TestCase):
         self.assertEqual(obs['p-value'], exp['p-value'])
 
     @numba_code
+    def test_engine_fast_is_accepted(self):
+        # Checks that "fast" is plumbed through and gives the same answer, not
+        # which engine ran; the kernels reduce in parallel, so a cython-versus-
+        # numba comparison is not stable inside a full test session. Which
+        # engine "fast" resolves to is covered in skbio/tests/test_config.py.
+        obs = permdisp(self.dm, self.grouping, permutations=99, seed=42,
+                       engine="fast")
+        exp = permdisp(self.dm, self.grouping, permutations=99, seed=42,
+                       engine="numba")
+        self.assertAlmostEqual(obs["test statistic"], exp["test statistic"])
+        self.assertEqual(obs["p-value"], exp["p-value"])
+
+    @numba_code
     def test_non_float_ordination_raises_like_cython(self):
         # geomedian_axis_one only has single and double precision signatures,
         # so the cython median path raises on anything else. The numba kernels

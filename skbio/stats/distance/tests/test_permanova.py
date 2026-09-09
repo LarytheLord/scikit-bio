@@ -463,6 +463,21 @@ class InternalPERMANOVATests(PERMANOVATestData):
         self.assertAlmostEqual(obs['test statistic'], exp['test statistic'])
         self.assertAlmostEqual(obs['p-value'], exp['p-value'])
 
+    @numba_code
+    def test_permanova_engine_fast_is_accepted(self):
+        # Checks that "fast" is plumbed through and gives the same answer, not
+        # which engine ran: permanova's numba kernel reduces in parallel, so
+        # its last bits shift with the thread state and a cython-versus-numba
+        # comparison is not stable inside a full test session. Which engine
+        # "fast" resolves to is covered in skbio/tests/test_config.py.
+        dm = DistanceMatrix(self.dm_full, self.ids)
+        obs = permanova(dm, self.grouping_labels, permutations=99, seed=42,
+                        engine="fast")
+        exp = permanova(dm, self.grouping_labels, permutations=99, seed=42,
+                        engine="numba")
+        self.assertAlmostEqual(obs['test statistic'], exp['test statistic'])
+        self.assertEqual(obs['p-value'], exp['p-value'])
+
     def test_bad_engine_raises(self):
         dm = DistanceMatrix(self.dm_full, self.ids)
         with self.assertRaisesRegex(ValueError, "engine='julia' is not supported"):

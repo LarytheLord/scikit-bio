@@ -243,6 +243,19 @@ class InternalMantelTests(MantelTestData):
             self.assertAlmostEqual(obs[1], exp[1])
             npt.assert_allclose(obs[2], exp[2])
 
+    @numba_code
+    def test_engine_fast_is_accepted(self):
+        # mantel's two engines agree bit for bit at every size tried, so this
+        # cannot tell which one ran; it checks that "fast" is plumbed through
+        # and returns the same answer. Which engine "fast" resolves to is
+        # covered directly in skbio/tests/test_config.py.
+        obs = mantel(self.minx_dm, self.miny_dm, permutations=99, seed=0,
+                     engine="fast")
+        exp = mantel(self.minx_dm, self.miny_dm, permutations=99, seed=0,
+                     engine="numba")
+        self.assertEqual(obs[0], exp[0])
+        self.assertEqual(obs[1], exp[1])
+
     def test_bad_engine_raises_for_all_methods(self):
         # An unsupported engine is rejected up front, regardless of method
         # (including kendalltau, which has no numba path).

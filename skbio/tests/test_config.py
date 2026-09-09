@@ -82,6 +82,39 @@ class TestResolveEngine(TestCase):
             with self.assertRaisesRegex(ImportError, "requires the optional numba"):
                 _resolve_engine("numba", ("cython", "numba"))
 
+    def test_fast_resolves_to_what_the_caller_names(self):
+        self.assertEqual(
+            _resolve_engine("fast", ("cython", "numba"), fast="numba"), "numba"
+        )
+        self.assertEqual(
+            _resolve_engine("fast", ("cython", "numba"), fast="cython"), "cython"
+        )
+
+    def test_fast_without_a_target_falls_back_to_the_default(self):
+        # A function with nothing faster to offer does not pass fast=, and
+        # engine="fast" then has to be a no-op rather than an error.
+        set_config("engine", "cython")
+        self.assertEqual(_resolve_engine("fast", ("cython", "numba")), "cython")
+
+    def test_fast_is_resolved_after_the_global_default(self):
+        # Placing the branch after the global lookup means one check covers an
+        # explicit engine="fast" and a global default of "fast" alike. The
+        # global cannot be set through set_config today, so it is set directly.
+        from skbio._config import _SKBIO_OPTIONS
+
+        previous = _SKBIO_OPTIONS["engine"]
+        _SKBIO_OPTIONS["engine"] = "fast"
+        try:
+            self.assertEqual(
+                _resolve_engine(None, ("cython", "numba"), fast="numba"), "numba"
+            )
+        finally:
+            _SKBIO_OPTIONS["engine"] = previous
+
+    def test_fast_target_still_checked_against_supported(self):
+        with self.assertRaisesRegex(ValueError, "engine='numba' is not supported"):
+            _resolve_engine("fast", ("cython",), fast="numba")
+
 
 if __name__ == "__main__":
     main()
