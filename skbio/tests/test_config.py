@@ -111,6 +111,20 @@ class TestResolveEngine(TestCase):
         finally:
             _SKBIO_OPTIONS["engine"] = previous
 
+    def test_fast_stays_a_no_op_when_the_default_is_itself_fast(self):
+        # A function that offers nothing faster passes no fast=, and "fast"
+        # then has to degrade to the conservative engine. Reading the option
+        # again would hand back "fast" and raise, so the fallback is fixed.
+        from skbio._config import _SKBIO_OPTIONS
+
+        previous = _SKBIO_OPTIONS["engine"]
+        _SKBIO_OPTIONS["engine"] = "fast"
+        try:
+            self.assertEqual(_resolve_engine(None, ("cython", "numba")), "cython")
+            self.assertEqual(_resolve_engine("fast", ("cython", "numba")), "cython")
+        finally:
+            _SKBIO_OPTIONS["engine"] = previous
+
     def test_fast_target_still_checked_against_supported(self):
         with self.assertRaisesRegex(ValueError, "engine='numba' is not supported"):
             _resolve_engine("fast", ("cython",), fast="numba")

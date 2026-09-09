@@ -43,9 +43,13 @@ Configuration options
 from typing import Any
 
 
+# The conservative engine. Also what "fast" degrades to when a function offers
+# nothing faster, so it cannot depend on the current value of the option.
+_DEFAULT_ENGINE = "cython"
+
 _SKBIO_OPTIONS = {
     "table_output": "pandas",
-    "engine": "cython",
+    "engine": _DEFAULT_ENGINE,
 }
 
 
@@ -123,9 +127,9 @@ def _resolve_engine(engine, supported, fast=None):
     fast : str, optional
         What ``engine="fast"`` resolves to for this function. The caller
         decides, since which engine is fastest depends on the function and on
-        what is installed. If not given, ``"fast"`` falls through to the global
-        default, which makes it a no-op for functions that have nothing faster
-        to offer.
+        what is installed. If not given, ``"fast"`` resolves to the
+        conservative default engine, which makes it a no-op for functions that
+        have nothing faster to offer.
 
     Returns
     -------
@@ -143,9 +147,11 @@ def _resolve_engine(engine, supported, fast=None):
     if engine is None:
         engine = get_config("engine")
     # Resolved after the global default is read, so that one branch covers both
-    # an explicit engine="fast" and a global default of "fast".
+    # an explicit engine="fast" and a global default of "fast". The fallback is
+    # the conservative engine rather than the option's current value, which
+    # would still be "fast" when the default itself is "fast".
     if engine == "fast":
-        engine = fast if fast is not None else get_config("engine")
+        engine = fast if fast is not None else _DEFAULT_ENGINE
     if engine not in supported:
         raise ValueError(
             f"engine='{engine}' is not supported here; choose from {supported}."
