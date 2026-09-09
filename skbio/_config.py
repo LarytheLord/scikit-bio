@@ -146,10 +146,10 @@ def _resolve_engine(engine, supported, fast=None):
     """
     if engine is None:
         engine = get_config("engine")
-    # Resolved after the global default is read, so that one branch covers both
-    # an explicit engine="fast" and a global default of "fast". The fallback is
-    # the conservative engine rather than the option's current value, which
-    # would still be "fast" when the default itself is "fast".
+    # Resolved after the global default is read, so a single branch handles
+    # "fast" wherever it came from. The fallback is the conservative engine
+    # rather than a re-read of the option, so a function that offers nothing
+    # faster degrades instead of raising.
     if engine == "fast":
         engine = fast if fast is not None else _DEFAULT_ENGINE
     if engine not in supported:

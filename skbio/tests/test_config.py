@@ -97,9 +97,10 @@ class TestResolveEngine(TestCase):
         self.assertEqual(_resolve_engine("fast", ("cython", "numba")), "cython")
 
     def test_fast_is_resolved_after_the_global_default(self):
-        # Placing the branch after the global lookup means one check covers an
-        # explicit engine="fast" and a global default of "fast" alike. The
-        # global cannot be set through set_config today, so it is set directly.
+        # "fast" is a per-call option: set_config rejects it, so the global
+        # default can never be "fast" through the public API. Resolving after
+        # the global lookup keeps one branch handling it wherever it came from,
+        # which is what this pins. The option is set directly to reach it.
         from skbio._config import _SKBIO_OPTIONS
 
         previous = _SKBIO_OPTIONS["engine"]
@@ -113,8 +114,10 @@ class TestResolveEngine(TestCase):
 
     def test_fast_stays_a_no_op_when_the_default_is_itself_fast(self):
         # A function that offers nothing faster passes no fast=, and "fast"
-        # then has to degrade to the conservative engine. Reading the option
-        # again would hand back "fast" and raise, so the fallback is fixed.
+        # then has to degrade to the conservative engine rather than raise.
+        # Re-reading the option would hand back "fast" again, so the fallback
+        # is a fixed constant. Not reachable through set_config today; pinned
+        # so that stays true if the option is ever widened.
         from skbio._config import _SKBIO_OPTIONS
 
         previous = _SKBIO_OPTIONS["engine"]
