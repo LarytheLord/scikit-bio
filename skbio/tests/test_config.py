@@ -10,6 +10,7 @@ from unittest import TestCase, main
 from unittest.mock import patch
 
 from skbio._config import get_config, set_config, _resolve_engine
+from skbio.util import numba_code
 
 
 class TestOptions(TestCase):
@@ -83,11 +84,21 @@ class TestResolveEngine(TestCase):
                 _resolve_engine("numba", ("cython", "numba"))
 
     def test_fast_resolves_to_what_the_caller_names(self):
-        self.assertEqual(
-            _resolve_engine("fast", ("cython", "numba"), fast="numba"), "numba"
-        )
+        # A target the resolver could not have arrived at on its own shows that
+        # the caller's value is what gets used, and needs no optional
+        # dependency to check.
+        with self.assertRaisesRegex(ValueError, "engine='julia' is not supported"):
+            _resolve_engine("fast", ("cython", "numba"), fast="julia")
         self.assertEqual(
             _resolve_engine("fast", ("cython", "numba"), fast="cython"), "cython"
+        )
+
+    @numba_code
+    def test_fast_resolves_to_numba_when_that_is_the_target(self):
+        # The production case: every wired call site passes "numba" when numba
+        # imports. Marked, since resolving to it imports numba.
+        self.assertEqual(
+            _resolve_engine("fast", ("cython", "numba"), fast="numba"), "numba"
         )
 
     def test_fast_without_a_target_falls_back_to_the_default(self):
@@ -107,7 +118,7 @@ class TestResolveEngine(TestCase):
         _SKBIO_OPTIONS["engine"] = "fast"
         try:
             self.assertEqual(
-                _resolve_engine(None, ("cython", "numba"), fast="numba"), "numba"
+                _resolve_engine(None, ("cython", "numba"), fast="cython"), "cython"
             )
         finally:
             _SKBIO_OPTIONS["engine"] = previous
