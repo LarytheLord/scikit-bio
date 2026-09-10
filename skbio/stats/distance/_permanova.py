@@ -544,12 +544,12 @@ def permanova(
         default is used (see :func:`skbio.set_config`). ``"fast"`` lets
         scikit-bio pick whichever engine it expects to be quicker here, which
         is Numba when it is installed and Cython otherwise; results may differ
-        from the default in the last bits. When ``"numba"`` is
-        selected, the optional scikit-bio-binaries acceleration is not used.
-        When the distance matrix is resident on a CuPy- or PyTorch-backed GPU
-        (CUDA or ROCm) and ``engine="numba"``, a fused GPU kernel is used;
-        matrices on other backends use the array-API path instead (see Notes for
-        the ROCm-PyTorch case).
+        from the default in the last bits. When ``"numba"`` is selected, the
+        optional scikit-bio-binaries acceleration is not used. When the
+        distance matrix is resident on a CuPy- or PyTorch-backed GPU (CUDA or
+        ROCm) and ``engine="numba"``, a fused GPU kernel is used; matrices on
+        other backends use the array-API path instead (see Notes for the
+        ROCm-PyTorch case).
 
         .. versionadded:: 0.7.4
 
