@@ -45,6 +45,16 @@ class TestOptions(TestCase):
         ):
             set_config("engine", "julia")
 
+    def test_set_engine_rejects_fast(self):
+        # "fast" is a per-call value only. It stands for a different engine in
+        # each function, so there is nothing one global setting could mean by
+        # it, and _resolve_engine's own handling of "fast" assumes the option
+        # never holds it.
+        with self.assertRaisesRegex(
+            ValueError, "Unsupported value 'fast' for 'engine'."
+        ):
+            set_config("engine", "fast")
+
 
 class TestResolveEngine(TestCase):
     def setUp(self):
