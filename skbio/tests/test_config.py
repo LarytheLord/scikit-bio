@@ -96,9 +96,12 @@ class TestResolveEngine(TestCase):
     def test_fast_resolves_to_what_the_caller_names(self):
         # A target the resolver could not have arrived at on its own shows that
         # the caller's value is what gets used, and needs no optional
-        # dependency to check.
-        with self.assertRaisesRegex(ValueError, "engine='julia' is not supported"):
-            _resolve_engine("fast", ("cython", "numba"), fast="julia")
+        # dependency to check. The name is deliberately nonsense so that it
+        # cannot be read as an engine scikit-bio might one day support.
+        with self.assertRaisesRegex(
+            ValueError, "engine='SantaGoesSkiing' is not supported"
+        ):
+            _resolve_engine("fast", ("cython", "numba"), fast="SantaGoesSkiing")
         self.assertEqual(
             _resolve_engine("fast", ("cython", "numba"), fast="cython"), "cython"
         )
