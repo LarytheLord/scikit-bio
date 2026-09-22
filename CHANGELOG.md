@@ -2,6 +2,10 @@
 
 ## Version 0.7.5-dev
 
+### Features
+
+* Added Numba GPU acceleration for `permdisp` on NVIDIA and AMD devices. With `engine="numba"` and a GPU-resident `DistanceMatrix`, a fused kernel evaluates the permutation loop on the device for both the centroid and median tests, falling back to the host Numba engine when the kernel is unavailable.
+
 
 ## Version 0.7.4
 
