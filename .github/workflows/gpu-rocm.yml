@@ -1,0 +1,166 @@
+name: GPU CI (ROCm)
+
+# The AMD counterpart to "GPU CI". It assumes the runner host already provides
+# system ROCm, the same way the CUDA workflow assumes an NVIDIA driver, and only
+# installs the Python layer on top. The runner is started and stopped by hand,
+# so there is no equivalent of the azure-start/azure-stop workflows here.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+    paths-ignore: ["web/**", "**.md", "README.rst"]
+  workflow_dispatch:
+
+# One ROCm runner, one job at a time.
+concurrency:
+  group: rocm-gpu
+  queue: max
+
+env:
+  # numba-hip caps numba below 0.62, which does not support Python 3.14, so this
+  # job pins lower than the CUDA workflow's latest_python rather than tracking it.
+  rocm_python: "3.12"
+
+permissions:
+  contents: read
+
+jobs:
+  test-gpu-rocm:
+    name: Array API (${{ matrix.backend }}, rocm, ${{ fromJSON('["pypi", "conda"]')[matrix.use_conda] }})
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.event.action == 'labeled' &&
+       github.event.label.name == 'gpu-ci-rocm') ||
+      (github.event_name != 'pull_request' &&
+       github.ref == 'refs/heads/main')
+
+    runs-on: [self-hosted, linux, x64, rocm-gpu]
+    defaults:
+      run:
+        shell: bash -l {0}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        backend: [torch, cupy]
+        use_conda: [true, false]
+    steps:
+      - uses: actions/checkout@v7
+
+      # System ROCm is expected to come from the host image, not from this
+      # workflow. Fail loudly and early if it does not, rather than later with a
+      # confusing import error.
+      - name: Check ROCm driver
+        run: '"${ROCM_PATH:-/opt/rocm}/bin/rocm-smi"'
+
+      - name: Setup conda environment
+        if: ${{ matrix.use_conda }}
+        uses: conda-incubator/setup-miniconda@v4
+        with:
+          auto-update-conda: true
+          python-version: ${{ env.rocm_python }}
+          environment-file: ci/conda_host_env.yml
+
+      # actions/setup-python has no builds for RHEL-family systems such as the AMD
+      # HPC cluster, so the pip job uses the host's Python instead.
+      - name: Setup CPython environment
+        if: ${{ !matrix.use_conda }}
+        run: |
+          "python${{ env.rocm_python }}" -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies (conda)
+        if: ${{ matrix.use_conda }}
+        run: |
+          conda install -q --yes -c conda-forge --file ci/requirements.txt --file ci/requirements.test.txt
+          python -m ensurepip
+          pip install --no-deps .
+          conda list
+
+      - name: Install dependencies (pip)
+        if: ${{ !matrix.use_conda }}
+        run: |
+          python -m ensurepip
+          pip install --prefer-binary -r ci/requirements.txt -r ci/requirements.test.txt
+          pip install --no-deps .
+          pip list
+
+      # The ROCm array backends ship as wheels from AMD's index in both cases;
+      # conda-forge does not carry ROCm builds of them.
+      - name: Install ROCm backend
+        run: |
+          # The ROCm torch wheel is over 4 GB (the CUDA one is under 1 GB), which
+          # older pip fails to download, so bring pip up to date first.
+          python -m pip install --upgrade pip
+          # amd-cupy's index and numba-hip's extra are both keyed to the system
+          # ROCm version, so it is read off the host.
+          VERFILE="${ROCM_PATH:-/opt/rocm}/.info/version"
+          test -r "$VERFILE" || { echo "::error::no ROCm version file at $VERFILE"; exit 1; }
+          ROCM_VER=$(cut -d- -f1 "$VERFILE")
+          echo "system ROCm $ROCM_VER"
+          # amd-cupy will not import without ROCM_HOME; point it at the system
+          # ROCm for the steps that follow.
+          echo "ROCM_HOME=${ROCM_HOME:-${ROCM_PATH:-/opt/rocm}}" >> "$GITHUB_ENV"
+          case "${{ matrix.backend }}" in
+            torch) pip install torch --index-url https://download.pytorch.org/whl/rocm6.4 ;;
+            cupy)  pip install amd-cupy --extra-index-url "https://pypi.amd.com/rocm-${ROCM_VER}/simple/" ;;
+          esac
+          # numba-hip lets the fused GPU kernels actually run here. PyPI only has
+          # 0.0.2, so this pins the commit validated on this stack, and its
+          # hip-python dependencies are published on test.pypi.org.
+          pip install --extra-index-url https://test.pypi.org/simple \
+            "numba-hip[rocm-${ROCM_VER//./-}] @ git+https://github.com/ROCm/numba-hip.git@39be62768fb449b3c35f4fb5d2b95e81a9f55184"
+
+      - name: Verify GPU is visible to backend
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          python - <<'PY'
+          import os
+          backend = os.environ["BACKEND"]
+          if backend == "torch":
+              import torch
+              assert torch.cuda.is_available(), "torch installed without ROCm"
+              assert torch.version.hip, "torch is a CUDA build, not ROCm"
+              print("torch:", torch.__version__, "HIP:", torch.version.hip,
+                    "device:", torch.cuda.get_device_name(0))
+          elif backend == "cupy":
+              import cupy
+              assert cupy.cuda.runtime.is_hip, "cupy is a CUDA build, not ROCm"
+              n = cupy.cuda.runtime.getDeviceCount()
+              assert n > 0, "cupy sees no GPU"
+              print("cupy:", cupy.__version__, "devices:", n)
+          PY
+
+      - name: Verify Numba can target the GPU
+        # Without this the job still passes when numba-hip is missing or cannot
+        # reach the ROCm runtime: the fused kernel is simply skipped and every
+        # test takes the fallback, so the GPU kernels would look tested when
+        # they were never run. A kernel that fails to build is caught by the
+        # warning filter in the test step instead.
+        run: |
+          python - <<'PY'
+          from numba import hip
+          assert hip.is_available(), "numba.hip cannot target this GPU"
+          print("numba.hip devices:", hip.list_devices())
+          PY
+
+      - name: Run tests
+        # The dispatchers catch a kernel failure, warn once and fall back, which
+        # passes every test. Turning that warning into an error makes the job
+        # fail when a kernel did not run.
+        env:
+          SKBIO_ARRAY_BACKEND: ${{ matrix.backend }}
+          SKBIO_DEVICE: cuda
+        run: |
+          cd ci && coverage run --rcfile ../pyproject.toml -m pytest -m array_api --pyargs skbio \
+            -W "error:The Numba GPU kernel could not be used:UserWarning"
+
+      - name: Generate coverage reports
+        run: cd ci && coverage lcov --rcfile ../pyproject.toml
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: scikit-bio/scikit-bio
