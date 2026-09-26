@@ -33,6 +33,7 @@ from skbio.stats.distance._permdisp_gpu import (
 )
 from skbio.stats.distance._cutils import geomedian_axis_one
 from skbio.util import get_data_path, numba_code
+from skbio.util._array import _get_backend_name
 from skbio.util._testing import ArrayAPITestMixin, array_backends
 
 IS_INTEL_MAC = platform.system() == "Darwin" and platform.machine() == "x86_64"
@@ -897,13 +898,15 @@ class PermdispGpuKernelTests(TestCase, ArrayAPITestMixin):
         self.assertEqual(self._run(DistanceMatrix(self.data)), {})
 
     @numba_code
-    @array_backends("torch", "cupy")
+    @array_backends("jax", "torch", "cupy")
     def test_gpu_kernel_is_used_on_device_input(self, xp, device):
         # The only test here that fails if the GPU dispatch is deleted outright.
         # It needs a real device, so it runs in the GPU CI lane and on a GPU
-        # node, and is skipped everywhere else.
-        if device == "cpu":
-            self.skipTest("needs a device-resident matrix")
+        # node, and is skipped everywhere else. JAX has no Numba GPU path and is
+        # skipped too; it is listed because the harness errors on a GPU lane that
+        # runs no backend.
+        if device == "cpu" or _get_backend_name(xp) == "jax":
+            self.skipTest("needs a device-resident CuPy or PyTorch matrix")
         dm = DistanceMatrix(self.make_array(xp, device, self.data))
         self.assertTrue(self._run(dm), "dispatch never reached the GPU kernel")
 
