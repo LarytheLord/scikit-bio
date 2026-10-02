@@ -36,9 +36,11 @@ jobs:
        github.ref == 'refs/heads/main')
 
     runs-on: [self-hosted, linux, x64, rocm-gpu]
+    # The conda job needs a login shell. The pip job must not use one: the runner
+    # persists, and it would source the conda lines left in ~/.profile.
     defaults:
       run:
-        shell: bash -l {0}
+        shell: ${{ matrix.use_conda && 'bash -l {0}' || 'bash' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -48,16 +50,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # System ROCm is expected to come from the host image, not from this
-      # workflow. Fail loudly and early if it does not, rather than later with a
-      # confusing import error.
+      # System ROCm comes from the host image; fail early if it is missing. No
+      # login shell here: ~/.profile may still activate a deleted conda.
       - name: Check ROCm driver
+        shell: bash
         run: '"${ROCM_PATH:-/opt/rocm}/bin/rocm-smi"'
 
+      # In the job's temp directory, which the runner empties before every job,
+      # so a conda job never reuses the previous one's environment.
       - name: Setup conda environment
         if: ${{ matrix.use_conda }}
         uses: conda-incubator/setup-miniconda@v4
         with:
+          installation-dir: ${{ runner.temp }}/miniconda3
+          pkgs-dirs: ${{ runner.temp }}/conda_pkgs
           auto-update-conda: true
           python-version: ${{ env.rocm_python }}
           environment-file: ci/conda_host_env.yml
@@ -86,8 +92,7 @@ jobs:
           pip install --no-deps .
           pip list
 
-      # The ROCm array backends ship as wheels from AMD's index in both cases;
-      # conda-forge does not carry ROCm builds of them.
+      # The ROCm builds of torch and cupy are pip wheels, in the conda job too.
       - name: Install ROCm backend
         run: |
           # The ROCm torch wheel is over 4 GB (the CUDA one is under 1 GB), which
@@ -106,9 +111,8 @@ jobs:
             torch) pip install torch --index-url https://download.pytorch.org/whl/rocm6.4 ;;
             cupy)  pip install amd-cupy --extra-index-url "https://pypi.amd.com/rocm-${ROCM_VER}/simple/" ;;
           esac
-          # numba-hip lets the fused GPU kernels actually run here. PyPI only has
-          # 0.0.2, so this pins the commit validated on this stack, and its
-          # hip-python dependencies are published on test.pypi.org.
+          # numba-hip 0.2.1 from PyPI does not import on ROCm 7.2.0, so this pins
+          # the validated commit; its hip-python dependencies are on test.pypi.org.
           pip install --extra-index-url https://test.pypi.org/simple \
             "numba-hip[rocm-${ROCM_VER//./-}] @ git+https://github.com/ROCm/numba-hip.git@39be62768fb449b3c35f4fb5d2b95e81a9f55184"
 
