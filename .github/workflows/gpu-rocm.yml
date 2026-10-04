@@ -98,8 +98,8 @@ jobs:
           # The ROCm torch wheel is over 4 GB (the CUDA one is under 1 GB), which
           # older pip fails to download, so bring pip up to date first.
           python -m pip install --upgrade pip
-          # amd-cupy's index and numba-hip's extra are both keyed to the system
-          # ROCm version, so it is read off the host.
+          # The torch and amd-cupy indexes and numba-hip's extra are all keyed to
+          # the system ROCm version, so it is read off the host.
           VERFILE="${ROCM_PATH:-/opt/rocm}/.info/version"
           test -r "$VERFILE" || { echo "::error::no ROCm version file at $VERFILE"; exit 1; }
           ROCM_VER=$(cut -d- -f1 "$VERFILE")
@@ -108,7 +108,7 @@ jobs:
           # ROCm for the steps that follow.
           echo "ROCM_HOME=${ROCM_HOME:-${ROCM_PATH:-/opt/rocm}}" >> "$GITHUB_ENV"
           case "${{ matrix.backend }}" in
-            torch) pip install torch --index-url https://download.pytorch.org/whl/rocm6.4 ;;
+            torch) pip install torch --index-url "https://download.pytorch.org/whl/rocm${ROCM_VER%.*}" ;;
             cupy)  pip install amd-cupy --extra-index-url "https://pypi.amd.com/rocm-${ROCM_VER}/simple/" ;;
           esac
           # numba-hip 0.2.1 from PyPI does not import on ROCm 7.2.0, so this pins
