@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ci/mac-pip-probe]
+  pull_request:
 
 permissions:
   contents: read
