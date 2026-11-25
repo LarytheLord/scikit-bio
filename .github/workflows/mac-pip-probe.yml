@@ -1,0 +1,97 @@
+name: mac-pip-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/mac-pip-probe]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: ${{ matrix.variant }} py${{ matrix.python_version }}
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash -l {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ["3.11", "3.14"]
+        variant: [v0-baseline, v1-path-prefix, v2-nonlogin, v3-github-path]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup CPython environment
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python_version }}
+      - name: Prepend setup-python to GITHUB_PATH
+        if: matrix.variant == 'v3-github-path'
+        run: echo "$pythonLocation/bin" >> "$GITHUB_PATH"
+      - name: Diagnostics (login shell)
+        run: |
+          echo "image: ${ImageVersion:-unknown} ${ImageOS:-}"
+          echo "pythonLocation=$pythonLocation"
+          echo "--- PATH entries mentioning python (login shell)"
+          echo "$PATH" | tr ':' '\n' | grep -n -i -E 'python|framework|hostedtoolcache|homebrew'
+          echo "--- which -a"
+          which -a python python3 pip pip3
+          python --version
+          pip --version
+          echo "--- python lines in profile files"
+          grep -n -i python ~/.bash_profile ~/.profile ~/.bashrc ~/.zprofile /etc/profile /etc/paths /etc/paths.d/* 2>/dev/null
+          echo "--- framework versions on image"
+          ls -l /Library/Frameworks/Python.framework/Versions/
+          echo "--- /usr/local/bin python links"
+          ls -l /usr/local/bin | grep -i -E 'python|pip'
+      - name: Diagnostics (non-login shell)
+        shell: bash {0}
+        run: |
+          echo "--- PATH entries mentioning python (non-login shell)"
+          echo "$PATH" | tr ':' '\n' | grep -n -i -E 'python|framework|hostedtoolcache|homebrew'
+          which -a python python3 pip pip3
+          python --version
+          pip --version
+      - name: Install dependencies
+        if: matrix.variant != 'v2-nonlogin'
+        run: |
+          if [ "${{ matrix.variant }}" = "v1-path-prefix" ]; then export PATH="$pythonLocation/bin:$PATH"; fi
+          python -m ensurepip
+          pip install --prefer-binary -r ci/requirements.txt -r ci/requirements.test.txt
+          pip install --no-deps .
+          pip list
+      - name: Install dependencies (non-login)
+        if: matrix.variant == 'v2-nonlogin'
+        shell: bash {0}
+        run: |
+          python -m ensurepip
+          pip install --prefer-binary -r ci/requirements.txt -r ci/requirements.test.txt
+          pip install --no-deps .
+          pip list
+      - name: Interpreter check
+        if: matrix.variant != 'v2-nonlogin'
+        run: |
+          if [ "${{ matrix.variant }}" = "v1-path-prefix" ]; then export PATH="$pythonLocation/bin:$PATH"; fi
+          python -c "import sys; print(sys.version); sys.exit(0 if '%d.%d' % sys.version_info[:2] == '${{ matrix.python_version }}' else 1)" && echo "PYVER_CHECK=OK" || echo "PYVER_CHECK=WRONG"
+          command -v coverage && echo "COVERAGE_CHECK=OK" || echo "COVERAGE_CHECK=MISSING"
+      - name: Interpreter check (non-login)
+        if: matrix.variant == 'v2-nonlogin'
+        shell: bash {0}
+        run: |
+          python -c "import sys; print(sys.version); sys.exit(0 if '%d.%d' % sys.version_info[:2] == '${{ matrix.python_version }}' else 1)" && echo "PYVER_CHECK=OK" || echo "PYVER_CHECK=WRONG"
+          command -v coverage && echo "COVERAGE_CHECK=OK" || echo "COVERAGE_CHECK=MISSING"
+      - name: Run unit tests
+        if: matrix.variant != 'v2-nonlogin'
+        env:
+          WITH_COVERAGE: "TRUE"
+        run: |
+          if [ "${{ matrix.variant }}" = "v1-path-prefix" ]; then export PATH="$pythonLocation/bin:$PATH"; fi
+          make test
+      - name: Run unit tests (non-login)
+        if: matrix.variant == 'v2-nonlogin'
+        shell: bash {0}
+        env:
+          WITH_COVERAGE: "TRUE"
+        run: make test
